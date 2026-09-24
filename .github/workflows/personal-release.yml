@@ -1,0 +1,139 @@
+name: Personal Release
+
+# The fork's own build: a side-by-side "Tinycast Personal" app that never touches the official
+# channels, the Homebrew tap or Discord. Its bundle id maps to ReleaseChannel.development, so the
+# in-app updater stays off; a new build is installed from this fork's Releases page.
+run-name: "Tinycast Personal · ${{ github.ref_name }} #${{ github.run_number }}"
+
+on:
+  push:
+    branches: [personal]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-release
+  cancel-in-progress: false
+
+env:
+  DISPLAY_NAME: Tinycast Personal
+  BUNDLE_ID: com.tinycast.app.personal
+
+jobs:
+  check:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { echo "::error::No Xcode 26.x on this runner"; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Harnesses
+        run: ./Scripts/run-tests.sh
+
+      - name: Lint
+        run: |
+          brew install swiftlint
+          ./Scripts/lint.sh
+
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { echo "::error::No Xcode 26.x on this runner"; exit 1; }
+          echo "Using $XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      # Versioned after the newest upstream release, so the About window says what it is based on.
+      - name: Compute version
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE="$(gh release list -R abue-ammar/tinycast -L 1 --json tagName -q '.[0].tagName')"
+          BASE="${BASE#v}"; BASE="${BASE%%-*}"
+          FULL="${BASE:-0.0.0}-personal.${GITHUB_RUN_NUMBER}"
+          {
+            echo "full_version=${FULL}"
+            echo "tag=personal-v${FULL}"
+            echo "dmg_file=Tinycast-Personal-${FULL}.dmg"
+            echo "zip_file=Tinycast-Personal-${FULL}.zip"
+          } >> "$GITHUB_OUTPUT"
+
+      # The same stable self-signed identity on every build keeps the Accessibility grant alive.
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KPW="$(openssl rand -base64 24)"
+          echo "${P12_BASE64}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KPW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${P12_PASSWORD}" -A -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Build app
+        env:
+          VERSION: ${{ steps.meta.outputs.full_version }}
+        run: |
+          xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Tinycast Self-Signed" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp=none" \
+            PRODUCT_NAME="$DISPLAY_NAME" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            build
+
+      - name: Assert the signature
+        run: ./Scripts/verify-signature.sh "$RUNNER_TEMP/DerivedData/Build/Products/Release/${DISPLAY_NAME}.app"
+
+      - name: Package DMG and ZIP
+        env:
+          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
+          ZIP_FILE: ${{ steps.meta.outputs.zip_file }}
+        run: |
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/${DISPLAY_NAME}.app"
+          STAGE="$(mktemp -d)"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          mkdir -p dist
+          diskutil image create from "$STAGE" --format UDZO --volumeName "$DISPLAY_NAME" "dist/${DMG_FILE}"
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "dist/${ZIP_FILE}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.full_version }}
+        run: |
+          {
+            echo "Personal build of \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\`."
+            echo
+            echo "Commits on top of upstream main:"
+            git fetch -q https://github.com/abue-ammar/tinycast.git main
+            git log --format='- %s' FETCH_HEAD..HEAD
+            echo
+            echo 'Install: open the DMG, drag to /Applications, then run'
+            echo "\`xattr -dr com.apple.quarantine \"/Applications/${DISPLAY_NAME}.app\"\` once."
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" "dist/"*.dmg "dist/"*.zip \
+            --target "$GITHUB_SHA" \
+            --title "${DISPLAY_NAME} ${VERSION}" \
+            --notes-file "$RUNNER_TEMP/notes.md"
