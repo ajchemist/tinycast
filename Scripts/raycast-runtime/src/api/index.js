@@ -97,7 +97,7 @@ const BrowserExtension = rejectingNamespace("BrowserExtension", ["getContent", "
 
 const WindowManagement = {
   DesktopType: nestedEnums.WindowManagement.DesktopType,
-  ...rejectingNamespace("WindowManagement", ["getWindowsOnActiveDesktop", "getActiveWindow", "setWindowBounds", "getDesktops"]),
+  ...system.windowManagement,
 };
 
 export const raycastApi = {
@@ -153,10 +153,11 @@ export const raycastApi = {
 
   OAuth,
 
+  WindowManagement,
+
   // Unimplemented namespaces
   AI,
   BrowserExtension,
-  WindowManagement,
 
   // Deprecated aliases
   copyTextToClipboard: system.copyTextToClipboard,
