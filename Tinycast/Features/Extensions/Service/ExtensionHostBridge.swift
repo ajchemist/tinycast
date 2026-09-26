@@ -129,6 +129,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
     private let clipboardStore: ClipboardStore
     private let fetcher: ExtensionFetcher
     private let sockets = ExtensionWebSocketBridge()
+    private let windowManagement = ExtensionWindowManagement()
 
     init(clipboardStore: ClipboardStore, fetcher: ExtensionFetcher = ExtensionFetcher()) {
         self.clipboardStore = clipboardStore
@@ -160,6 +161,9 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         case "dns": return await ExtensionNameResolver.resolve(arguments.first)
         case "proc": return try await ExtensionAsyncProcess.wait(arguments.first)
         case "oauth": return try await oauth(method: method, arguments: arguments)
+        case "windowManagement":
+            return try windowManagement.perform(
+                method: method, arguments: arguments, target: context?.pasteTarget)
         default: throw ExtensionHostError.unknown("\(api).\(method)")
         }
     }
@@ -174,6 +178,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
     /// Called wherever a command's context is discarded: nothing left open outlives its session.
     func sessionEnded() {
         sockets.closeAll()
+        windowManagement.reset()
     }
 
     // MARK: - Clipboard

@@ -229,6 +229,15 @@ export function getFrontmostBrowserTab() {
   return unsupported("getFrontmostBrowserTab");
 }
 
+// ─── Window management ──────────────────────────────────────────────
+
+export const windowManagement = {
+  getActiveWindow: () => hostCall("windowManagement", "activeWindow", []),
+  getWindowsOnActiveDesktop: () => hostCall("windowManagement", "windowsOnActiveDesktop", []),
+  getDesktops: () => hostCall("windowManagement", "desktops", []),
+  setWindowBounds: (options) => hostCall("windowManagement", "setWindowBounds", [options ?? {}]),
+};
+
 // ─── Feedback ───────────────────────────────────────────────────────
 
 export class Toast {

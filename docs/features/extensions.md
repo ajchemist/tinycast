@@ -7,7 +7,7 @@ produces, rendered natively into the palette. No Electron, no browser, no Node.j
   [The Swift host](#the-swift-host) · [Rendering](#rendering)
 - [Turning it on](#turning-it-on) · [Installing extensions](#installing-extensions) ·
   [Registries](#registries) · [Shortcuts](#shortcuts) · [Aliases](#aliases) · [Deeplinks](#deeplinks) ·
-  [What's supported](#whats-supported) ·
+  [What's supported](#whats-supported) · [Window management](#window-management) ·
   [What isn't](#what-isnt-supported-yet) · [Working on the runtime](#working-on-the-runtime)
 
 ## Invariants
@@ -122,6 +122,7 @@ Two host-call flavours:
 | `Service/ExtensionHostBridge.swift` | main-actor host APIs (clipboard, storage, cache, window, toasts, system, oauth) |
 | `Service/ExtensionNodeShims.swift` | the synchronous `fs` / `os` / `child_process` / `crypto` / `zlib` services |
 | `Service/ExtensionFetcher.swift` | `fetch` over `URLSession`, plus collecting async `exec` children and the shared PATH resolver |
+| `Service/ExtensionWindowManagement.swift` | Raycast's `WindowManagement` over the window feature's AX layer |
 | `Service/ExtensionWebSocketBridge.swift` | `URLSessionWebSocketTask` connections, opened and read from JS |
 | `Service/ExtensionNameResolver.swift` | `getaddrinfo`, which is how a `.local` name resolves |
 | `Service/ExtensionOAuthKeychain.swift` | secure OAuth token storage backed by macOS Keychain |
@@ -629,7 +630,7 @@ interval floor instead of sixty.
 `showInFinder`, `getApplications`, `getDefaultApplication`, `getFrontmostApplication`,
 `getSelectedText`, `getSelectedFinderItems`, `launchCommand`, `updateCommandMetadata`,
 `openExtensionPreferences`,
-`useNavigation`, `OAuth`, `Icon`, `Color`, `Image.Mask`, `Keyboard.Shortcut.Common`, `LaunchType`.
+`useNavigation`, `OAuth`, [`WindowManagement`](#window-management), `Icon`, `Color`, `Image.Mask`, `Keyboard.Shortcut.Common`, `LaunchType`.
 
 **OAuth 2.0 PKCE** — `OAuth.PKCEClient`, `OAuth.TokenSet`, `OAuth.RedirectMethod`, with S256 challenges and
 tokens in the login Keychain (service `com.tinycast.extensions.oauth`, `kSecAttrAccessibleWhenUnlocked`),
@@ -747,12 +748,34 @@ extensions / 114 of 147 view commands** boot and render. `Scripts/raycast-runtim
 `Scripts/run-tests.sh ext-test` reproduce that measurement. OAuth landed after this run, so the three
 OAuth extensions it excluded are not counted yet — re-measure before quoting these numbers.
 
+## Window management
+
+`WindowManagement` is Raycast's contract over `ExtensionWindowManagement`, which reads and writes
+through the window feature's `AXWindowAccess`, so an extension's move lands the way a built-in
+command's does. It needs the Accessibility grant, and it is independent of the Window Management
+switch: a user who installs a window extension has asked for it.
+
+- **The active window is the one the palette displaced** — `pasteTarget`, the same app
+  `getFrontmostApplication` reports — never Tinycast's own.
+- **Coordinates are AX space**: top-left of the primary display, +Y down, as in Raycast.
+- **A desktop is a display.** Spaces have no public API, so each display's current Space stands in;
+  a desktop's `id` and `screenId` are its display number. `desktopId` on `setWindowBounds` is
+  ignored — a position already names a display.
+- **Desktops also carry `frame` and `visibleFrame`**, as `{position, size}`. Raycast reports only a
+  `size`, which leaves an extension unable to place anything clear of the menu bar and Dock; these
+  are additions an extension may read, falling back to `size` when absent.
+- **A window `id` is the window server's number** when one matches the AX window's owner and frame,
+  and it resolves only within the bridge that issued it: an AX element has no public identity, so
+  the element itself is held until the session ends.
+- **`bounds: "fullscreen"` enters full screen**; any other write to a full-screen window is refused
+  rather than racing its exit animation.
+
 ## What isn't supported yet
 
 | Gap | Why |
 | --- | --- |
 | **Raycast's PKCE proxy (`oauth.raycast.com`)** | Extensions whose provider has no PKCE support exchange tokens through Raycast's proxy. `OAuth.PKCEClient` works; a provider that needs that proxy still fails. |
-| **`AI`, `BrowserExtension`, `WindowManagement`** | Raycast services with no local equivalent. Importing them works; calling one throws with a clear reason. |
+| **`AI`, `BrowserExtension`** | Raycast services with no local equivalent. Importing them works; calling one throws with a clear reason. |
 | **A WebSocket to a host with a certificate macOS distrusts** | `ws`'s `rejectUnauthorized: false` is ignored — URLSession validates the chain either way. |
 | **Aborting a `fetch` already in flight** | `AbortSignal` is complete — `timeout`, `abort` and `any` included — and `fetch` checks it on both sides of the host call, so a caller gets its `AbortError`. The request itself still runs to completion: the signal isn't carried across the bridge, so nothing cancels the `URLSessionTask`. A timeout bounds the caller, not the network. |
 | **Streaming `child_process.spawn`** | `spawn` runs the child to completion and emits its output as one chunk (async-iterable, which is what `get-stream`/`execa` consume). True duplex streaming would need a bidirectional channel across the bridge. Extensions built on `execa`'s deeper stream API can still fail. |

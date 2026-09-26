@@ -1181,6 +1181,35 @@ export async function runFixtures() {
     );
   });
 
+  const setBounds = [];
+  await run(
+    "WindowManagement reaches the host",
+    `
+    import { WindowManagement } from "@raycast/api";
+    export default async function Command() {
+      const window = await WindowManagement.getActiveWindow();
+      const [desktop] = await WindowManagement.getDesktops();
+      await WindowManagement.setWindowBounds({ id: window.id, bounds: { position: { x: desktop.size.width / 20 } } });
+      globalThis.__window = { id: window.id, type: desktop.type };
+    }
+    `,
+    "no-view",
+    async (harness) => {
+      check("read the active window", harness.call("globalThis.__window")?.id === "42", JSON.stringify(harness.call("globalThis.__window")));
+      check("set its bounds by id", setBounds[0]?.id === "42" && setBounds[0]?.bounds?.position?.x === 100, JSON.stringify(setBounds));
+    },
+    {
+      stubs: {
+        "windowManagement.activeWindow": () => ({ id: "42", active: true, bounds: "fullscreen", desktopId: "1" }),
+        "windowManagement.desktops": () => [{ id: "1", screenId: "1", active: true, type: "User", size: { width: 2000, height: 1000 } }],
+        "windowManagement.setWindowBounds": (args) => {
+          setBounds.push(args[0]);
+          return null;
+        },
+      },
+    },
+  );
+
   await run("timers drive an async render", asyncSource, "view", async (harness) => {
     check("starts loading", describeTree(harness.state.trees[0]).includes("isLoading=true"));
     await wait(120);

@@ -375,6 +375,23 @@ async function stubHostCall(api, method, args) {
     case "oauth.removeTokens":
       oauthTokens.delete(args[0]);
       return null;
+    // One 1512×982 display with a 33pt menu bar and a Dock-free work area, in AX's top-left space.
+    case "windowManagement.desktops":
+      return [{
+        id: "1", screenId: "1", active: true, type: "User", size: { width: 1512, height: 982 },
+        frame: { position: { x: 0, y: 0 }, size: { width: 1512, height: 982 } },
+        visibleFrame: { position: { x: 0, y: 33 }, size: { width: 1512, height: 949 } },
+      }];
+    case "windowManagement.activeWindow":
+      return {
+        id: "42", active: true, desktopId: "1", positionable: true, resizable: true,
+        fullScreenSettable: true, bounds: { position: { x: 200, y: 120 }, size: { width: 800, height: 600 } },
+      };
+    case "windowManagement.windowsOnActiveDesktop":
+      return [];
+    case "windowManagement.setWindowBounds":
+      console.log(`  setWindowBounds ${JSON.stringify(args[0])}`);
+      return null;
     default:
       if (["window", "feedback", "cache", "storage", "clipboard", "system"].includes(api)) return null;
       throw new Error(`harness: no async stub for ${api}.${method}`);
