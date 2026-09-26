@@ -8,6 +8,9 @@ run-name: "Tinycast Personal · ${{ github.ref_name }} #${{ github.run_number }}
 on:
   push:
     branches: [personal]
+  # Nightly, 03:00 KST. Schedules read the default branch, which on this fork is `personal`.
+  schedule:
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 permissions:
@@ -22,10 +25,55 @@ env:
   BUNDLE_ID: com.tinycast.app.personal
 
 jobs:
+  # Nightly only: merge upstream main into `personal`, then build only if the tip is unreleased.
+  # A GITHUB_TOKEN push starts no new run, and it cannot push upstream workflow-file changes.
+  sync:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: personal
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        id: merge
+        run: |
+          git config user.name "ajchemist"
+          git config user.email "1694505+aJchemist@users.noreply.github.com"
+          git fetch -q https://github.com/abue-ammar/tinycast.git main
+          if ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            git merge --no-edit FETCH_HEAD -m "Merge upstream main into personal"
+            git push origin HEAD:personal
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip an already-released tip
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.merge.outputs.sha }}
+        run: |
+          LAST="$(gh release list -L 1 --json tagName -q '.[0].tagName')"
+          LAST_SHA="$([ -n "$LAST" ] && git rev-list -n1 "$LAST" 2>/dev/null || true)"
+          if [ "$LAST_SHA" = "$SHA" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${SHA::7} is already released as ${LAST}; nothing to build."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
+    needs: sync
+    if: always() && (needs.sync.result == 'skipped' || needs.sync.outputs.build == 'true')
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.sync.outputs.sha || github.sha }}
 
       - name: Select Xcode 26
         run: |
@@ -42,10 +90,15 @@ jobs:
           ./Scripts/lint.sh
 
   release:
+    needs: sync
+    if: always() && (needs.sync.result == 'skipped' || needs.sync.outputs.build == 'true')
     runs-on: macos-26
+    env:
+      SHA: ${{ needs.sync.outputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ env.SHA }}
           fetch-depth: 0
 
       - name: Select Xcode 26
@@ -124,16 +177,16 @@ jobs:
           VERSION: ${{ steps.meta.outputs.full_version }}
         run: |
           {
-            echo "Personal build of \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\`."
+            echo "Personal ${GITHUB_EVENT_NAME/schedule/nightly} build of \`${SHA::7}\` on \`personal\`."
             echo
             echo "Commits on top of upstream main:"
             git fetch -q https://github.com/abue-ammar/tinycast.git main
-            git log --format='- %s' FETCH_HEAD..HEAD
+            git log --no-merges --format='- %s' FETCH_HEAD..HEAD
             echo
             echo 'Install: open the DMG, drag to /Applications, then run'
             echo "\`xattr -dr com.apple.quarantine \"/Applications/${DISPLAY_NAME}.app\"\` once."
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" "dist/"*.dmg "dist/"*.zip \
-            --target "$GITHUB_SHA" \
+            --target "$SHA" \
             --title "${DISPLAY_NAME} ${VERSION}" \
             --notes-file "$RUNNER_TEMP/notes.md"
