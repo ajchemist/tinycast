@@ -239,9 +239,11 @@ function syncHostCall(api, method, args) {
     }
     case "proc.start": {
       const spec = args[0];
+      // Like `ExtensionNodeShims`: a spec's `env` replaces the environment rather than extending it.
+      const options = { cwd: spec.cwd, env: spec.env ?? process.env, stdio: spec.detached ? "ignore" : "pipe" };
       const child = spec.shell
-        ? spawn("/bin/sh", ["-c", spec.command], { cwd: spec.cwd, stdio: spec.detached ? "ignore" : "pipe" })
-        : spawn(spec.command, spec.args, { cwd: spec.cwd, stdio: spec.detached ? "ignore" : "pipe" });
+        ? spawn("/bin/sh", ["-c", spec.command], options)
+        : spawn(spec.command, spec.args, options);
       child.on("error", () => {});
       if (child.pid === undefined) throw Object.assign(new Error(`ENOENT: spawn '${spec.command}'`), { code: "ENOENT" });
       if (spec.detached) return child.pid;
@@ -268,10 +270,11 @@ function syncHostCall(api, method, args) {
       return null;
     case "proc.run": {
       const spec = args[0];
+      const options = { cwd: spec.cwd, env: spec.env ?? process.env };
       try {
         const stdout = spec.shell
-          ? execFileSync("/bin/sh", ["-c", spec.command], { cwd: spec.cwd })
-          : execFileSync(spec.command, spec.args, { cwd: spec.cwd });
+          ? execFileSync("/bin/sh", ["-c", spec.command], options)
+          : execFileSync(spec.command, spec.args, options);
         return { stdout: stdout.toString("base64"), stderr: "", status: 0 };
       } catch (error) {
         return {
