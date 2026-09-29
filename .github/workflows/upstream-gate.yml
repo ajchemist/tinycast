@@ -87,7 +87,9 @@ jobs:
           grep -q 'BUILD SUCCEEDED' "$RUNNER_TEMP/build.log"
           CHANGED="$(git diff --name-only FETCH_HEAD...HEAD -- '*.swift')"
           NEW=""
-          for f in $CHANGED; do NEW+="$(grep -F "/$f:" "$RUNNER_TEMP/build.log" | grep 'warning:' | sort -u)"; done
+          for f in $CHANGED; do
+            NEW+="$(grep -F "/$f:" "$RUNNER_TEMP/build.log" | grep 'warning:' | sort -u || true)"
+          done
           if [ -n "$NEW" ]; then
             echo "$NEW"
             echo "::error::warnings in files this branch changed"
