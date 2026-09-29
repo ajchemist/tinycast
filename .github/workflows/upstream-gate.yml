@@ -1,0 +1,101 @@
+name: Upstream Gate
+
+# The bar abue-ammar/tinycast sets for a pull request (CONTRIBUTING.md, docs/testing.md), run on a
+# branch of this fork before it goes upstream. Upstream has no CI, and there is no local Xcode here.
+# Started by fork/upstream-check.sh; the run name carries the sha fork/upstream-pr.sh looks for.
+run-name: "Upstream gate · ${{ inputs.ref }} @ ${{ inputs.sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to check
+        required: true
+      sha:
+        description: The commit the branch is expected at
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          path: src
+
+      - uses: actions/checkout@v7
+        with:
+          ref: personal
+          path: tools
+          sparse-checkout: fork
+
+      - name: The branch is still at the sha
+        working-directory: src
+        env:
+          REF: ${{ inputs.ref }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          git fetch -q origin "$REF"
+          [ "$(git rev-parse FETCH_HEAD)" = "$SHA" ] || { echo "::error::$REF moved past $SHA"; exit 1; }
+          echo "### $REF @ ${SHA:0:12}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Static guard
+        working-directory: src
+        run: |
+          git fetch -q https://github.com/abue-ammar/tinycast.git main
+          ../tools/fork/upstream-guard.sh HEAD FETCH_HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { echo "::error::No Xcode 26.x on this runner"; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+
+      # Generated files are never hand-edited: rebuilding the runtime must reproduce the committed one.
+      - name: Generated runtime is current
+        working-directory: src/Scripts/raycast-runtime
+        run: |
+          bun install --no-save
+          bun build.mjs
+          git diff --exit-code -- ../../Tinycast/Resources/RaycastRuntime.generated.js
+
+      - name: Harnesses
+        working-directory: src
+        run: ./Scripts/run-tests.sh
+
+      - name: Lint
+        working-directory: src
+        run: |
+          brew install swiftlint
+          ./Scripts/lint.sh
+
+      # Zero new warnings: any warning in a file the branch touched fails the gate.
+      - name: Debug build
+        working-directory: src
+        run: |
+          set -o pipefail
+          xcodebuild build -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/build.log" \
+            | grep -E 'error:|warning:|BUILD' || true
+          grep -q 'BUILD SUCCEEDED' "$RUNNER_TEMP/build.log"
+          CHANGED="$(git diff --name-only FETCH_HEAD...HEAD -- '*.swift')"
+          NEW=""
+          for f in $CHANGED; do NEW+="$(grep -F "/$f:" "$RUNNER_TEMP/build.log" | grep 'warning:' | sort -u)"; done
+          if [ -n "$NEW" ]; then
+            echo "$NEW"
+            echo "::error::warnings in files this branch changed"
+            exit 1
+          fi
+
+      - name: Release build
+        working-directory: src
+        run: |
+          xcodebuild build -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DerivedDataRelease" CODE_SIGNING_ALLOWED=NO -quiet
