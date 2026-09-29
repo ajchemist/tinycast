@@ -31,9 +31,13 @@ final class CodexAppServerClient {
     var onElicitation: ((CodexElicitation) async -> Bool)?
     /// A launch is about to replace a running process, whose threads go with it.
     var onRelaunch: (() -> Void)?
+    /// The reader's command path and variables, asked at each launch so an edit takes the next one.
+    var launchSettings: () -> InstalledAILaunch = { InstalledAILaunch() }
 
     private let codexHome: URL?
     let workspace: URL
+    /// The command the last launch ran, kept after it stops so Settings can still name it.
+    private(set) var executable: URL?
     private var process: Process?
     private var processID: UUID?
     private var input: FileHandle?
@@ -73,11 +77,11 @@ final class CodexAppServerClient {
     ]
 
     /// The reader's own servers, read under the app-server's flags; `nil` when that fails.
-    nonisolated private static func foreignServerNames(
-        executable: URL, workspace: URL, codexHome: URL?
+    nonisolated static func foreignServerNames(
+        executable: URL, workspace: URL, codexHome: URL?,
+        inherited: [String: String] = ProcessInfo.processInfo.environment
     ) async -> [String]? {
-        var environment = ProcessInfo.processInfo.environment
-        environment["NO_COLOR"] = "1"
+        var environment = ExecutableLocator.environment(running: executable, inherited: inherited)
         if let codexHome { environment["CODEX_HOME"] = codexHome.path }
         let result = await InstalledAIProbe.run(
             executable: executable, arguments: configurationFlags + ["mcp", "list", "--json"],
@@ -114,9 +118,21 @@ final class CodexAppServerClient {
 
     private func launch(_ toolServers: [AIToolServer]) async throws {
         let generation = self.generation
-        guard let executable = await ExecutableLocator.locate("codex") else {
-            throw ClientError.executableMissing
+        let settings = launchSettings()
+        let executable: URL
+        switch settings.command() {
+        case .executable(let url):
+            executable = url
+        case .missing(let path):
+            throw ClientError.launchFailed(InstalledAILaunch.missingCommandMessage(path))
+        case .automatic:
+            guard let found = await ExecutableLocator.locate("codex") else {
+                throw ClientError.executableMissing
+            }
+            executable = found
         }
+        self.executable = executable
+        let inherited = settings.inherited(for: .codex)
         try checkNotStopped(since: generation)
         // The list is only readable at launch, so the old process cannot be talked into it.
         if isRunning {
@@ -144,7 +160,8 @@ final class CodexAppServerClient {
         // Unread, the reader's servers would start inside the chat; so Codex does not start either.
         guard
             let foreign = await Self.foreignServerNames(
-                executable: executable, workspace: workspace, codexHome: codexHome)
+                executable: executable, workspace: workspace, codexHome: codexHome,
+                inherited: inherited)
         else {
             throw ClientError.launchFailed(
                 "Tinycast could not read which MCP servers your Codex configuration runs, so it "
@@ -173,19 +190,8 @@ final class CodexAppServerClient {
             + CodexMCPLaunch.arguments(servers: toolServers, disabling: foreign)
             + ["app-server"]
         process.currentDirectoryURL = workspace
-        let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-        let commandPaths = [
-            executable.deletingLastPathComponent().path,
-            "/opt/homebrew/bin",
-            "/usr/local/bin"
-        ]
-        var environment = ProcessInfo.processInfo.environment.merging(
-            [
-                "NO_COLOR": "1",
-                "PATH": (commandPaths + [inheritedPath]).joined(separator: ":")
-            ]
-        ) { _, value in value }
-        environment.merge(secrets) { _, new in new }
+        var environment = ExecutableLocator.environment(
+            running: executable, adding: secrets, inherited: inherited)
         // Tests can isolate app-server state; production deliberately inherits the user's Codex home.
         if let codexHome { environment["CODEX_HOME"] = codexHome.path }
         process.environment = environment

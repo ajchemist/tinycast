@@ -129,9 +129,11 @@ nothing ticking.
 
 ## Commands
 
-All five leave the launcher when the feature is off **or** when "Show in launcher" is, through
-`CalendarCoordinator.applyEnabled`, the `applyQuicklinksPresence` twin. Their shortcuts, the join
-card and the menu bar are unaffected: only launcher search is.
+All five leave the launcher when the feature is off, through `CalendarCoordinator.applyEnabled`.
+"Show in launcher" takes out only the individual meeting entries, the way Custom Commands' switch
+hides only its section: `My Schedule` stays findable, so meetings are one search away rather than
+on the root. Each command's own checkbox hides it from search; its shortcut, the join card and the
+menu bar are unaffected by either.
 
 The Calendar settings can limit the individual meeting entries in launcher search to the next 1, 3,
 or 5 meetings, or leave them all visible. New installations default to the next 3 meetings so a busy
@@ -206,11 +208,19 @@ minute tick. SwiftUI writes
 `false` back through `isInserted` when it removes the item itself, so the insertion setter ignores a
 removal while the item is hidden for being empty: only a drag-out turns the display to `.disabled`.
 
-`CalendarMenuBarMenu` lists calendar actions only — `Join <title>` and `Open in Calendar...` for the
-displayed event, then `My Schedule` and `Calendar Settings...` — so the two menus never repeat each
-other. `Join` is absent for a linkless appointment rather than opening Calendar under a name that
+`CalendarMenuBarMenu` lists calendar actions only — `Join <title>`, `Open in Calendar...` and
+`Dismiss` for the displayed event, then `My Schedule` and `Calendar Settings...` — so the two menus
+never repeat each other. `Join` is absent for a linkless appointment rather than opening Calendar under a name that
 lies. **A bare click never joins**: the menu bar is not a button, and a mis-click there would open a
 call.
+
+`Dismiss` takes the displayed occurrence out of the menu bar, and `MenuBarSummary.event` filters it
+out exactly as it filters a lapsed one — so the next event inside its own lead takes the space with
+no second rule, and with nothing behind it the item falls back to the glyph or leaves under **Hide
+when there are no upcoming events**. The set lives on `CalendarCoordinator` and lasts the launch, the
+way `autoJoined` does: a dismissal is a reaction to what is on screen now, not a preference worth
+persisting, and the ids are pruned against the store so the set cannot grow. It is deliberately per
+occurrence rather than per series — dismissing today's standup says nothing about tomorrow's.
 
 ## Auto join and the preview
 

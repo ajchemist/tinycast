@@ -23,6 +23,8 @@ final class CalendarCoordinator {
 
     /// Stored and written only on a flip: the menu-bar scene reads it, and must not re-run per tick.
     private(set) var hasMenuBarEvent = false
+    /// Dismissed from the menu bar this launch, the way `autoJoined` remembers what it opened.
+    private var dismissedFromMenuBar: Set<MeetingEvent.ID> = []
 
     init(
         store: CalendarStore,
@@ -71,7 +73,14 @@ final class CalendarCoordinator {
             hideAfterMinutes: settings.hideCurrentEvent.minutes,
             linkedOnly: settings.menuBarLinkedEventsOnly,
             hideCurrentAtStart: settings.hideCurrentEvent.hidesAtStart)
-        return summary.event(from: store.events, now: clock.now)
+        return summary.event(
+            from: store.events, now: clock.now, dismissed: dismissedFromMenuBar)
+    }
+
+    /// Dismisses what the menu drew: a handover mid-click must not eat the arriving event.
+    func dismissMenuBarEvent(_ meeting: MeetingEvent) {
+        dismissedFromMenuBar.insert(meeting.id)
+        refreshMenuBarEvent()
     }
 
     // MARK: - Feature switch
@@ -109,11 +118,8 @@ final class CalendarCoordinator {
     /// Publishes or withdraws everything the feature contributes to the launcher.
     func applyEnabled() {
         let enabled = settings.calendarEnabled
-        let commands: Set<CommandID> = [
-            .joinNextMeeting, .copyMeetingLink, .mySchedule, .openInCalendar, .createEvent
-        ]
-        appIndex.setCommandsVisible(commands, enabled)
-        appIndex.setCommandsListed(commands, settings.calendarShowInLauncher)
+        appIndex.setCommandsVisible(
+            [.joinNextMeeting, .copyMeetingLink, .mySchedule, .openInCalendar, .createEvent], enabled)
         guard enabled else {
             store.stop()
             clock.stop()
@@ -169,9 +175,18 @@ final class CalendarCoordinator {
     }
 
     private func refreshMenuBarEvent() {
+        forgetStaleDismissals()
         let hasEvent = menuBarEvent != nil
         guard hasEvent != hasMenuBarEvent else { return }
         hasMenuBarEvent = hasEvent
+    }
+
+    /// Assigned only on a change: a write every tick would re-run the label for nothing.
+    private func forgetStaleDismissals() {
+        guard !dismissedFromMenuBar.isEmpty else { return }
+        let live = dismissedFromMenuBar.intersection(store.events.map(\.id))
+        guard live != dismissedFromMenuBar else { return }
+        dismissedFromMenuBar = live
     }
 
     private func autoJoinIfDue() {
@@ -188,7 +203,8 @@ final class CalendarCoordinator {
         join(meeting, uninvited: true)
     }
 
-    private func publishEntries() {
+    /// "Show in launcher" gates only these rows, so My Schedule stays findable with meetings off.
+    func publishEntries() {
         guard settings.calendarEnabled, settings.calendarShowInLauncher else {
             appIndex.setMeetings([])
             return

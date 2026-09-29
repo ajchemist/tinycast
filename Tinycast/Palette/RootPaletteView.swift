@@ -79,6 +79,11 @@ struct RootPaletteView: View {
                 session: menuSearch, core: core, vm: vm, openActions: openActions)
         case .switchWindows:
             return WindowSwitchScreen(session: windowSwitch, core: core)
+        case .rooms:
+            return RoomsScreen(coordinator: core.roomCoordinator, session: core.roomSession, vm: vm)
+        case .roomWindows:
+            return RoomPickerScreen(
+                coordinator: core.roomCoordinator, session: core.roomSession, vm: vm)
         case .schedule:
             return ScheduleScreen(
                 store: calendarStore, clock: meetingClock, core: core, vm: vm,
@@ -335,10 +340,7 @@ struct RootPaletteView: View {
     @ViewBuilder
     private func emojiObservers(_ content: some View) -> some View {
         content
-            .onChange(of: vm.emojiCategoryFilter) {
-                vm.selection = 0
-                scroll = ScrollIntent(kind: .top)
-            }
+            .onChange(of: vm.emojiCategoryFilter) { land() }
             .onChange(of: core.pinnedEmoji.revision) { emojiGridChanged() }
             .onChange(of: vm.emojiGridColumnsOverride) { emojiGridChanged() }
             .onChange(of: settings.emojiGridColumns) { emojiGridChanged() }
@@ -368,8 +370,7 @@ struct RootPaletteView: View {
             .modifier(PaletteHideObserver { if menuOpen { closeMenus() } })
             .onChange(of: vm.query) {
                 if vm.collapseQueryLineBreaks() { return }
-                vm.selection = 0
-                scroll = ScrollIntent(kind: .top)
+                land()
                 if vm.mode == .fileSearch { fileSearch.search(vm.query, filter: vm.fileSearchFilter) }
                 if vm.mode == .dictionary { dictionary.lookUp(vm.query) }
                 if vm.mode == .menuSearch { menuSearch.filter(vm.query) }
@@ -386,25 +387,20 @@ struct RootPaletteView: View {
             }
             .modifier(ExtensionSelectionForwarder(screen: extensionScreen, selection: vm.selection))
             // A narrower list means the old index points at a different row, or at none.
-            .onChange(of: vm.clipboardFilter) {
-                vm.selection = 0
-                scroll = ScrollIntent(kind: .top)
-            }
+            .onChange(of: vm.clipboardFilter) { land() }
             // The filter is part of the query, so narrowing re-runs it rather than thinning rows.
             .onChange(of: vm.fileSearchFilter) {
-                vm.selection = 0
-                scroll = ScrollIntent(kind: .top)
+                land()
                 fileSearch.search(vm.query, filter: vm.fileSearchFilter)
             }
             .onChange(of: vm.mode) {
-                vm.selection = 0
                 vm.clipboardFilter = .all
                 vm.fileSearchFilter = .all
                 vm.emojiCategoryFilter = .all
                 vm.emojiGridColumnsOverride = nil
                 vm.fileSearchQuickLook = false
                 if menuOpen { closeMenus() }
-                scroll = ScrollIntent(kind: .top)
+                land()
                 searchFocused = !screen.hidesSearchField
                 // Every way out of the Uninstall screen: back chevron, bare backspace, a fresh summon.
                 if vm.mode != .uninstall { uninstall.cancel() }
@@ -421,15 +417,16 @@ struct RootPaletteView: View {
                 }
                 if vm.mode != .menuSearch { menuSearch.reset() }
                 if vm.mode != .switchWindows { windowSwitch.reset() }
+                if vm.mode != .rooms, vm.mode != .roomWindows { core.roomCoordinator.screensDidClose() }
                 // Leaving the screen any other way than Escape still ends the command's session.
                 if vm.mode != .extensionCommand, extensions.running != nil, !extensions.isAuthorizing {
                     Task { await extensions.stop() }
                 }
             }
-            // `prepare` may change nothing, so this intent still snaps the scroll to the origin.
+            // `prepare` may change nothing else, so this still lands the list as freshly opened.
             .onChange(of: vm.resetToken) {
                 if menuOpen { closeMenus() }
-                scroll = ScrollIntent(kind: .top)
+                land()
             }
             // ⌘. arrives as a token rather than a key press. See `PaletteState.pinChordToken`.
             .onChange(of: vm.pinChordToken) { performShortcut(.pin) }
@@ -449,7 +446,11 @@ struct RootPaletteView: View {
                 menuPanel.hide()
                 (hostWindow as? PalettePanel)?.onHeaderFieldBoundaryArrow = nil
             }
-            .onAppear { searchFocused = !screen.hidesSearchField }
+            // The first show builds this view after `prepare`, so no handler saw that reset.
+            .onAppear {
+                searchFocused = !screen.hidesSearchField
+                land()
+            }
             .modifier(SearchFieldHiding(hidden: hidesSearchField, apply: applySearchFieldHiding))
             // Several paths flip `paletteIsCollapsed`, so resize the window to match.
             .onChange(of: core.paletteCoordinator.paletteIsCollapsed) {
@@ -519,6 +520,11 @@ struct RootPaletteView: View {
                 }
                 let selection = selection(in: screen)
                 if command, press.modifiers.contains(.control), screen.tertiary(at: selection) {
+                    return .handled
+                }
+                if command, press.modifiers.contains(.shift),
+                    screen.perform(.copyCalculation, at: selection)
+                {
                     return .handled
                 }
                 if command { return screen.secondary(at: selection) ? .handled : .ignored }
@@ -645,8 +651,10 @@ struct RootPaletteView: View {
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
                     .frame(width: metrics.size.headerIconSlot)
+                    .windowDraggable(settings.paletteDraggable, onBegan: beginDrag, onEnded: endDrag)
             }
-            headerGutter(width: metrics.spacing.md)
+            // slot + xl equals a row's icon + lg, so the query starts where the row titles do.
+            headerGutter(width: metrics.spacing.xl)
             // One structural position: a field inside a branch loses first responder when it flips.
             headerField
             if let accessory = headerAccessory {
@@ -727,6 +735,7 @@ struct RootPaletteView: View {
         .frame(maxWidth: .infinity)
         // Set after the show, so the field it names is focused rather than the search field.
         .onChange(of: vm.pendingArgumentEntryID) { focusPendingArgument() }
+        .onChange(of: argumentFocused) { _, field in vm.noteEditingField(field != nil) }
         .onChange(of: quickAI.pendingAttachments.map(\.id)) { refreshAttachmentsMenu() }
     }
 
@@ -797,7 +806,7 @@ struct RootPaletteView: View {
         let font = metrics.typography.searchFieldNSFont
         let text = vm.query.isEmpty ? searchPrompt : vm.query
         let typed = (text as NSString).size(withAttributes: [.font: font]).width
-        let chrome = metrics.size.headerIconSlot + metrics.spacing.md * 4
+        let chrome = metrics.size.headerIconSlot + metrics.spacing.md * 3 + metrics.spacing.xl
         let room = metrics.size.panelWidth - accessory.width - chrome
         // +3pt so the caret sits after the last glyph rather than on top of it.
         return min(
@@ -1204,6 +1213,13 @@ struct RootPaletteView: View {
 
     // MARK: - Actions
 
+    /// Every reset lands here, so handlers that fire together agree in whatever order they run.
+    private func land() {
+        let landing = screen.landingSelection
+        vm.selection = landing
+        scroll = ScrollIntent(kind: landing == 0 ? .top : .center)
+    }
+
     private func move(_ delta: Int, in screen: any PaletteScreen) {
         let count = screen.rows.count
         guard count > 0 else { return }
@@ -1302,6 +1318,7 @@ struct RootPaletteView: View {
     /// Tab walks a screen's own fields first, then the inline arguments, then rings the modes.
     private func advanceTabFocus(backwards: Bool) {
         let screen = screen
+        if screen.tab(at: selection(in: screen), backwards: backwards) { return }
         if let next = screen.tabTarget(from: selection(in: screen), backwards: backwards) {
             vm.selection = next
             scroll = ScrollIntent(kind: .follow)
