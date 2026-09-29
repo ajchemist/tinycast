@@ -39,6 +39,9 @@ jobs:
           ref: personal
           fetch-depth: 0
 
+      - uses: oven-sh/setup-bun@v2
+
+      # The generated runtime conflicts whenever both sides touch the runtime; rebuilding resolves it.
       - name: Merge upstream main
         id: merge
         run: |
@@ -46,7 +49,18 @@ jobs:
           git config user.email "1694505+aJchemist@users.noreply.github.com"
           git fetch -q https://github.com/abue-ammar/tinycast.git main
           if ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
-            git merge --no-edit FETCH_HEAD -m "Merge upstream main into personal"
+            if ! git merge --no-edit FETCH_HEAD -m "Merge upstream main into personal"; then
+              GENERATED=Tinycast/Resources/RaycastRuntime.generated.js
+              CONFLICTS="$(git diff --name-only --diff-filter=U)"
+              if [ "$CONFLICTS" != "$GENERATED" ]; then
+                echo "::error::Merge conflicts need a hand: $CONFLICTS"
+                exit 1
+              fi
+              git checkout --theirs "$GENERATED"
+              (cd Scripts/raycast-runtime && bun install --no-save && bun build.mjs)
+              git add "$GENERATED"
+              git commit --no-edit
+            fi
             git push origin HEAD:personal
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
