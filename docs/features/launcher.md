@@ -1,7 +1,7 @@
 # App launcher & root search
 
 `AppIndex.scan()` runs off-main, enumerates the user's search scopes, and dedups by bundle ID (the
-earliest scope wins).
+earliest scope wins; within one folder, the newest `CFBundleShortVersionString` does).
 
 ## Invariants
 
@@ -53,6 +53,12 @@ immediate subfolder, are indexed. That catches vendor-folder installs like
 its `Contents/Applications` and `Contents/Developer/Applications` folders, where Xcode ships
 Instruments, Icon Composer and Simulator, and a subfolder nested deeper than one level still needs
 its own scope.
+
+Within one folder, bundles are listed newest `CFBundleShortVersionString` first, compared as numbers
+so `26.6` outranks `9.4`. A tie or an unreadable version falls back to Finder's name order. Because
+the scan keeps a bundle ID's first copy, two Xcodes in `/Applications` resolve to the newest, every
+scan, and the embedded apps follow their parent. Scope order still comes first: listing an older
+copy as its own earlier scope pins it (#1288).
 
 The defaults cover `/Applications` and `/System/Applications` plus their `Utilities` folders,
 `/System/Library/CoreServices/Applications`, the cryptex apps under
@@ -421,9 +427,11 @@ per-item reset in its Actions menu, and users can clear all learned ranking in G
 
 ## The empty list
 
-Favorites, then Suggestions, then one section per kind. Each kind section is sorted by the
-tiebreak, so what the user opens comes first and never-used entries still read alphabetically below
-it. The sort runs within each contiguous kind run of the publication order,
+Favorites, then Meetings, then Suggestions, then one section per kind. Meetings sit above
+Suggestions because a meeting is worth opening only until it ends. They keep the agenda's start
+order, including in the `Meetings` category listing, regardless of title or past usage. Each remaining
+kind section is sorted by the tiebreak, so what the user opens comes first and never-used entries still
+read alphabetically below it. The sort runs within each contiguous kind run of the publication order,
 so the sectioned view stays 1:1 with the flat selection.
 
 ### Suggestions
@@ -442,9 +450,9 @@ never suggested, however often they are opened:
    index, so it is never offered.
 
 A suggested entry leaves its kind section below, so no row appears twice. `AppIndex.Results` carries
-`favoriteCount` and `suggestionCount`, which `LauncherScreen` hands to `LauncherList` for its two
-leading headers. **Show suggestions** in Settings › General › Search turns the section off
-(`launcherShowsSuggestions`, carried by a settings backup). `HotKeyManager.revision` is part of
+`favoriteCount`, `meetingCount` and `suggestionCount`, which `LauncherScreen` hands to `LauncherList`
+for its three leading headers. **Show suggestions** in Settings › General › Search turns the section
+off (`launcherShowsSuggestions`, carried by a settings backup). `HotKeyManager.revision` is part of
 `AppIndex`'s results key, because binding a shortcut takes an entry out of the section.
 
 ## System actions
@@ -763,7 +771,10 @@ running dot and the availability of the running-only actions:
   `AppLauncher.quit(bundleID:)` terminates every instance of the bundle and reports whether
   anything was running; the palette only dismisses when something was, and it restores focus unless
   the app it just quit _was_ `previousApp`.
-- **Restart Application** — the row above it and **⌘R**, on the same guard: both chords resolve
+- **Force Quit Application** — the row below it and **⌃⌥⇧Q**, on the same guard and
+  the same dismissal. `AppLauncher.quit(bundleID:force:)` sends `forceTerminate()` instead, so the
+  app gets no chance to save or refuse.
+- **Restart Application** — the row above Quit and **⌘R**, on the same guard: all three chords resolve
   their target through `LauncherScreen.runningApplication(at:)`, the single place that condition
   lives. `AppLauncher.restart(bundleID:url:)` snapshots the running instances, subscribes to
   `NSWorkspace.DidTerminateApplicationMessage` _before_ terminating so an instance that exits at
@@ -778,10 +789,10 @@ running dot and the availability of the running-only actions:
   resolves that list **once**, confirms it with an `NSAlert`, then terminates exactly what was
   confirmed. The palette hides before the alert — it is a floating panel and would sit above it.
 
-Both quits are graceful `NSRunningApplication.terminate()`, so an app with unsaved work still puts up
-its own save sheet.
+Every quit but Force Quit is a graceful `NSRunningApplication.terminate()`, so an app with unsaved
+work still puts up its own save sheet.
 
 The ⌘K menu samples `isRunning` **once, when it opens** (`RootPaletteView.openActions()`), so an app
-launching or quitting elsewhere can't add or drop those two rows while the menu is up — the same freeze
+launching or quitting elsewhere can't add or drop those rows while the menu is up — the same freeze
 the rest of the menu already has ([palette.md](palette.md)). Only `LauncherList` observes
 `RunningAppsMonitor` live, for the running dot.

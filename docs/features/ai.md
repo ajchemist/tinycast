@@ -372,10 +372,10 @@ search, beside `AI Chat`'s; either shortcut keeps working while its command is h
 nothing at all while the feature is off. The palette search field becomes the single-line composer.
 The footer pill and Return are one action, `activate`: Send, or Stop while a response streams — an
 empty composer sends nothing, so the pill never needs a disabled state. The header's trailing model
-switcher uses the same in-window menu control as Clipboard's type filter and changes the chat route
-for the next message. For installed routes and OpenRouter models whose catalog reports the
-capability, it also shows the supported reasoning efforts and changes the chat effort for the next
-message. Other API routes keep their provider default because their model catalogs expose no
+switcher opens by click or ⌘P, uses the same in-window menu control as Clipboard's type filter and
+changes the chat route for the next message. For installed routes and OpenRouter models whose catalog
+reports the capability, it also shows the supported reasoning efforts and changes the chat effort for
+the next message. Other API routes keep their provider default because their model catalogs expose no
 portable effort contract. Neither change interrupts a response already streaming; stopping one is
 the pill's job, so the header never has to fit a third control beside the switcher.
 
@@ -442,6 +442,9 @@ menu's own chords, and dies with the window.
   (`⌘F`) and AI Settings (`⌥⌘,`) — plus what only a saved chat has: Copy Chat, Pin and Delete.
   `AIChatActionsMenu` builds it per open from the chat's state, as an `NSMenu` hung under the
   toolbar button whether the click or ⌘K opened it.
+  Escape closes the window; an open menu, active search or rename takes Escape first. The
+  sidebar clears a nonempty filter before a second Escape closes. Closing preserves the draft
+  and leaves a reply streaming.
 
 - **Sidebar** (`AIChatSidebarView`): a filter field over a `List` of every saved chat, Pinned
   first and then bucketed by day like Clipboard. The open chat is the selected row. A new chat has
@@ -546,8 +549,9 @@ window, and every chat action either surface sends — is the nineteenth feature
 - An `@server` chip — the tools glyph alone, since the handle is still in the text — or a staged
   pill follows the typed text with a clear gap, and a long draft stops it right before the model
   name, the same gap with a reasoning menu and without.
-- Clicking it opens the same anchored menu shape as Clipboard's type filter; arrows, Return and Escape
-  operate the menu without changing the draft.
+- Clicking it or pressing ⌘P opens the same anchored menu shape as Clipboard's type filter;
+  arrows, Return and Escape operate the menu without changing the draft.
+- Pressing ⌘P again closes the model menu and returns focus to the composer.
 - Repeatedly clicking either the model switcher or the type filter opens and closes every time, even
   when the next click lands immediately after dismissal or a few points off the first one.
 - Selecting a model updates the button immediately and the next message reaches that route.
@@ -583,6 +587,9 @@ window, and every chat action either surface sends — is the nineteenth feature
 - Drop a PDF on the pane with a text-only model selected: the HUD refuses it, as a paste would.
 - Collapse the sidebar with the toolbar button; ⌘N and ⌘Q (Close Window) still work, and ⌘Q with
   Settings in front closes Settings instead.
+- Escape closes AI Chat with the composer focused, preserving its draft and any streaming reply.
+  Menus and rename fields cancel first; the sidebar clears a nonempty filter, then closes on the
+  next Escape. Find in Chat cancels before a second Escape closes the window.
 - Harnesses: `ai-provider-test` (endpoints, request bodies, stream decoding including leading
   think tags across content and SSE splits, persistence repair,
   Codex framing, on-device routing, the two MCP launch encodings and the two consent channels, the
