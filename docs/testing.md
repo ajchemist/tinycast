@@ -104,6 +104,7 @@ If a change touches anything in the right column, the harness on the left is man
 | `palette-placement-test` | `DesignSystem/Theme.swift`, `Palette/PalettePlacement.swift` |
 | `hotkey-test` | `HotKeys/Model/DoubleTapModifier.swift`, `DoubleTapDetector.swift`, `ModifierKey.swift`, `ModifierKeyDetector.swift`, `HotKeyBinding.swift`, `HotKeySpelling.swift`, `HyperKey.swift`, `HotKeyAction.swift`, `Service/KeyShortcut.swift`, and the command→action mapping in `Launcher/Model/CommandID.swift` |
 | `dictation-test` | `Dictation/Model/DictationModel.swift`, `DictationTextFormatter.swift` — model paths and text formatting |
+| `dictation-field-test` | Composer rebinding and teardown, field-scoped dictation cancellation, and queued insertion validity; synthetic capture and real AppKit editors |
 | `dictation-volume-test` | Volume recovery across fade steps, user changes, output switching, failed writes and cancellation; injected audio controls only |
 | `dictation-inference-test` | Dictation byte BPE, Fourier/mel features and non-overlapping audio chunks; no downloaded models |
 | `dictation-worker-test` | Dictation's framed channel, worker reuse/switching, removal, cancellation and broken pipes with a fixture helper |
@@ -369,6 +370,8 @@ caches, TCC grants and login item, so this cannot disturb an installed copy.
 - ⌃N/⌃P move the highlight as ↓/↑ do; ⌃F/⌃B step the emoji grid's selection, and the caret elsewhere
 - The highlight always sits on the row the footer pill describes
 - With a calculation typed, the calculator card is first and is selected first
+- ⌘↵ on a number, unit or money card puts the answer in the search bar with the caret after it, so
+  ` * 2` typed straight away extends it — from ⌘K too; a date or time card offers neither
 - With macOS set to a decimal-comma region (Italian), `2,3 + 1,5` answers `3,8`, `max(2,5; 3)`
   answers `3`, and ↵ pastes `3,8`; General ▸ Calculator ▸ Number format `English` restores `2.3 + 1.5`
   and re-renders past Calculator History in the chosen format
@@ -585,6 +588,9 @@ caches, TCC grants and login item, so this cannot disturb an installed copy.
 - Command-Q does nothing anywhere; with Settings in front, Command-W closes Settings
 - Hiding restores the previous external app or Tinycast window
 - Open Notes Folder opens Finder with the active Markdown file selected, or the folder with no note
+- Hide a saved checklist, reset its boxes in another editor, and reopen: the boxes match the file
+- Reopen an unchanged note: Undo still works; an external content change starts fresh history
+- Remove the active file while hidden: reopening selects a remaining note or shows the empty state
 - Deleting every note closes the browse list and leaves one clean empty state with no character count;
   Command-N from there creates and selects one note
 - The browse list fades only at its bottom edge and rests opaque once it reaches the end
