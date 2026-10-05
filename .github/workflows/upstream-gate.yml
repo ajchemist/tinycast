@@ -66,7 +66,10 @@ jobs:
           bun build.mjs
           git diff --exit-code -- ../../Tinycast/Resources/RaycastRuntime.generated.js
 
+      # A timing-flaky harness on the runner must not hide what lint and the builds say.
       - name: Harnesses
+        id: harnesses
+        continue-on-error: true
         working-directory: src
         run: ./Scripts/run-tests.sh
 
@@ -101,3 +104,9 @@ jobs:
         run: |
           xcodebuild build -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
             -derivedDataPath "$RUNNER_TEMP/DerivedDataRelease" CODE_SIGNING_ALLOWED=NO -quiet
+
+      - name: Harnesses passed
+        if: steps.harnesses.outcome != 'success'
+        run: |
+          echo "::error::harnesses failed; see the Harnesses step"
+          exit 1
