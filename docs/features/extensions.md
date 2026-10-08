@@ -659,7 +659,7 @@ interval floor instead of sixty.
 `showInFinder`, `getApplications`, `getDefaultApplication`, `getFrontmostApplication`,
 `getSelectedText`, `getSelectedFinderItems`, `launchCommand`, `updateCommandMetadata`,
 `openExtensionPreferences`,
-`useNavigation`, `OAuth`, `Icon`, `Color`, `Image.Mask`, `Keyboard.Shortcut.Common`, `LaunchType`.
+`useNavigation`, `OAuth`, [`WindowManagement`](#window-management), `Icon`, `Color`, `Image.Mask`, `Keyboard.Shortcut.Common`, `LaunchType`.
 
 **OAuth 2.0 PKCE** — `OAuth.PKCEClient`, `OAuth.TokenSet`, `OAuth.RedirectMethod`, with S256 challenges and
 tokens in the login Keychain (service `com.tinycast.extensions.oauth`, `kSecAttrAccessibleWhenUnlocked`),
